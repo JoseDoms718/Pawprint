@@ -1,4 +1,3 @@
-# serve.py
 from flask import Flask, request, jsonify, url_for
 from flask_cors import CORS, cross_origin
 import tensorflow as tf
@@ -33,7 +32,7 @@ print("Model loaded.")
 # -----------------------------
 # LABELS
 # -----------------------------
-with open("labels.json", "r") as f:
+with open("../frontend/labels.json", "r") as f:
     class_indices = json.load(f)
 idx_to_class = {v: k for k, v in class_indices.items()}
 print("Labels loaded.")
@@ -750,22 +749,26 @@ def preprocess_image(file_stream):
     arr = np.expand_dims(arr, 0).astype(np.float32)  # make sure dtype is float32
     return arr
 
-# -----------------------------
-# HOME PAGE SERVE
-# -----------------------------
-from flask import send_file
-import os
 
-@app.route("/")
-def home():
-    return send_file(os.path.join(os.path.dirname(__file__), "index.html"))
 # -----------------------------
 # STATIC FILE SERVE (no moving files)
 # -----------------------------
-@app.route('/<path:filename>')
-def serve_static(filename):
-    return send_file(os.path.join(os.path.dirname(__file__), filename))
+from flask import send_from_directory
 
+FRONTEND_FOLDER = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "frontend")
+)
+
+@app.route("/")
+def home():
+    return send_from_directory(FRONTEND_FOLDER, "index.html")
+
+@app.route("/<path:path>")
+def static_proxy(path):
+    # If URL starts with static/, let the dedicated static route handle it
+    if path.startswith("static/"):
+        return serve_global_static(path.replace("static/", ""))
+    return send_from_directory(FRONTEND_FOLDER, path)
 
 # ---------------------------
 # /predict Endpoint
