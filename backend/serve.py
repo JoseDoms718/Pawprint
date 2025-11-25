@@ -22,7 +22,7 @@ IMG_SIZE = 224
 # APP
 # -----------------------------
 app = Flask(__name__, static_folder=STATIC_DIR)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app)  # simple, allows all origins
 
 # -----------------------------
 # MODEL LOAD (load once)
@@ -744,7 +744,6 @@ def serve_global_static(filename):
 # PREDICT endpoint
 # -----------------------------
 @app.route("/predict", methods=["POST"])
-@cross_origin(origin="*")
 def predict():
     try:
         if "image" not in request.files:
@@ -800,7 +799,6 @@ def predict():
 # GENERATE PDF endpoint
 # -----------------------------
 @app.route("/generate_pdf", methods=["POST"])
-@cross_origin(origin="*")
 def generate_pdf():
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
     from reportlab.lib.styles import ParagraphStyle
