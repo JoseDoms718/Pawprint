@@ -1,9 +1,12 @@
 const fileUpload = document.getElementById("fileUpload");
 const preview = document.getElementById("preview");
+const BASE_URL = window.location.hostname === "localhost"
+    ? "http://localhost:5000"
+    : "https://pawprint-backend.onrender.com";
 
-// Backend URLs: change PREDICT_URL if deploying too
-const PREDICT_URL = "http://localhost:8000/predict"; // local dev
-const GENERATE_PDF_URL = "http://localhost:8000/generate_pdf";
+const PREDICT_URL = `${BASE_URL}/predict`;
+const GENERATE_PDF_URL = `${BASE_URL}/generate_pdf`;
+
 
 let uploadedFile = null;      // store uploaded file for PDF
 let lastPrediction = null;    // store last prediction globally
