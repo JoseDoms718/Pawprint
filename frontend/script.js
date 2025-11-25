@@ -1,12 +1,10 @@
 const fileUpload = document.getElementById("fileUpload");
 const preview = document.getElementById("preview");
-const BASE_URL = window.location.hostname === "localhost"
-    ? "http://localhost:5000"
+const BASE_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:8000"
     : "https://pawprint-backend.onrender.com";
-
 const PREDICT_URL = `${BASE_URL}/predict`;
 const GENERATE_PDF_URL = `${BASE_URL}/generate_pdf`;
-
 
 let uploadedFile = null;      // store uploaded file for PDF
 let lastPrediction = null;    // store last prediction globally
@@ -135,7 +133,7 @@ fileUpload.addEventListener("change", async function(){
 // -------------------------
 // PDF generation
 // -------------------------
-document.addEventListener("click", async (e)=>{
+document.addEventListener("click", async (e) => {
     if(e.target && e.target.id==="downloadReport"){
         e.preventDefault();
         if(!lastPrediction || !uploadedFile){
@@ -150,21 +148,17 @@ document.addEventListener("click", async (e)=>{
         const formData = new FormData();
         formData.append("breed", lastPrediction.breed);
         formData.append("confidence", lastPrediction.confidence);
-        formData.append("image", uploadedFile, uploadedFile.name); // explicitly include filename
+        formData.append("image", uploadedFile, uploadedFile.name);
 
-        try{
+        try {
             const res = await fetch(GENERATE_PDF_URL, { method:"POST", body:formData });
             if(!res.ok) throw new Error(`Server returned ${res.status}`);
             const data = await res.json();
 
             if(data.pdf_url){
-            const link = document.createElement("a");
-            link.href = data.pdf_url;
-            link.download = `${lastPrediction.breed}_report.pdf`;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-        }
+                // Open PDF in new tab
+                window.open(data.pdf_url, "_blank");
+            }
 
         } catch(err){
             console.error("PDF generation failed:", err);
