@@ -11,10 +11,11 @@ import tensorflow as tf
 # -----------------------------
 # CONFIG
 # -----------------------------
-APP_ROOT = os.path.dirname(__file__)  # backend folder
+# Absolute paths to avoid local/Render path issues
+APP_ROOT = os.path.abspath(os.path.dirname(__file__))
 STATIC_DIR = os.path.join(APP_ROOT, "static")
 MODEL_DIR = os.path.join(APP_ROOT, "dog_model")
-LABELS_PATH = os.path.join(APP_ROOT, "labels.json")  # moved into backend
+LABELS_PATH = os.path.join(APP_ROOT, "labels.json")
 
 IMG_SIZE = 224
 
@@ -764,10 +765,10 @@ def predict():
 
             sample_path = os.path.join(STATIC_DIR, "breed_examples", f"{breed}.jpg")
             sample_url = (
-                url_for("serve_global_static", filename=f"breed_examples/{breed}.jpg", _external=True)
-                if os.path.exists(sample_path)
-                else None
-            )
+            url_for("serve_global_static", filename=f"breed_examples/{breed}.jpg")
+            if os.path.exists(sample_path)
+            else None
+        )
 
             short_desc = breed_descriptions.get(breed, "This breed is known for its unique traits.")
 
