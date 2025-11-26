@@ -26,19 +26,14 @@ app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)  # simple, allows all origins
 
 # -----------------------------
-# MODEL (lazy load)
+# MODEL (load once at startup)
 # -----------------------------
-model = None
-infer = None
+print("🔥 Loading TensorFlow model at startup...")
+model = tf.saved_model.load(MODEL_DIR)
+infer = model.signatures.get("serving_default") or list(model.signatures.values())[0]
+print("🔥 Model loaded and ready.")
 
 def get_model():
-    global model, infer
-    if model is None:
-        import tensorflow as tf
-        print("Loading TensorFlow model...")
-        model = tf.saved_model.load(MODEL_DIR)
-        infer = model.signatures.get("serving_default") or list(model.signatures.values())[0]
-        print("Model loaded. Available signatures:", list(model.signatures.keys()))
     return infer
 
 
