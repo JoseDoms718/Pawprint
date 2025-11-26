@@ -26,13 +26,21 @@ app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)  # simple, allows all origins
 
 # -----------------------------
-# MODEL LOAD (load once)
+# MODEL (lazy load)
 # -----------------------------
-print("Loading model from:", MODEL_DIR)
-model = tf.saved_model.load(MODEL_DIR)
-print("Available signatures:", list(model.signatures.keys()))
-infer = model.signatures.get("serving_default") or list(model.signatures.values())[0]
-print("Model loaded.")
+model = None
+infer = None
+
+def get_model():
+    global model, infer
+    if model is None:
+        import tensorflow as tf
+        print("Loading TensorFlow model...")
+        model = tf.saved_model.load(MODEL_DIR)
+        infer = model.signatures.get("serving_default") or list(model.signatures.values())[0]
+        print("Model loaded. Available signatures:", list(model.signatures.keys()))
+    return infer
+
 
 # -----------------------------
 # LABELS
@@ -755,7 +763,8 @@ def predict():
         file = request.files["image"]
         x = preprocess_image(file.stream)
 
-        preds_dict = infer(tf.constant(x))
+        infer_model = get_model()
+        preds_dict = infer_model(tf.constant(x))
         preds = list(preds_dict.values())[0].numpy()[0]
 
         top_indices = preds.argsort()[-3:][::-1]
@@ -802,134 +811,159 @@ def predict():
 # -----------------------------
 @app.route("/generate_pdf", methods=["POST"])
 def generate_pdf():
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.pagesizes import legal
-    from reportlab.lib import colors
-    from reportlab.lib.units import inch
+    try:
+        # Lazy imports
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.pagesizes import legal
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
 
-    breed_raw = request.form.get("breed", "Unknown_Breed")
-    breed_display = breed_raw.replace("_", " ").replace("-", " ").title()
-    breed = breed_raw
-    confidence = float(request.form.get("confidence", 0.0))
-    uploaded_file = request.files.get("image")
+        # -----------------------------
+        # Get form data
+        # -----------------------------
+        breed_raw = request.form.get("breed", "Unknown_Breed")
+        breed_display = breed_raw.replace("_", " ").replace("-", " ").title()
+        breed = breed_raw
+        confidence = float(request.form.get("confidence", 0.0))
+        uploaded_file = request.files.get("image")
 
-    short_desc = breed_descriptions.get(breed, "A well-loved companion breed.")
+        short_desc = breed_descriptions.get(breed, "A well-loved companion breed.")
 
-    description = expand_description(
-        breed,
-        short_desc,
-        breed_temperaments,
-        breed_appearance,
-        breed_care,
-        breed_quick_tips
-    )
+        # -----------------------------
+        # Expand full description
+        # -----------------------------
+        description = expand_description(
+            breed,
+            short_desc,
+            breed_temperaments,
+            breed_appearance,
+            breed_care,
+            breed_quick_tips
+        )
 
-    img_path = None
-    if uploaded_file and uploaded_file.filename:
-        upload_dir = os.path.join(STATIC_DIR, "uploads")
-        os.makedirs(upload_dir, exist_ok=True)
-        safe_filename = re.sub(r"[^a-zA-Z0-9_.-]", "_", uploaded_file.filename)
-        img_path = os.path.join(upload_dir, safe_filename)
-        uploaded_file.save(img_path)
+        # -----------------------------
+        # Save uploaded image
+        # -----------------------------
+        img_path = None
+        if uploaded_file and uploaded_file.filename:
+            upload_dir = os.path.join(STATIC_DIR, "uploads")
+            os.makedirs(upload_dir, exist_ok=True)
+            safe_filename = re.sub(r"[^a-zA-Z0-9_.-]", "_", uploaded_file.filename)
+            img_path = os.path.join(upload_dir, safe_filename)
+            uploaded_file.save(img_path)
 
-    report_dir = os.path.join(STATIC_DIR, "reports")
-    os.makedirs(report_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    safe_breed_name = re.sub(r"[^a-zA-Z0-9_-]", "_", breed)
-    output_path = os.path.join(report_dir, f"{safe_breed_name}_report.pdf")
+        # -----------------------------
+        # Prepare PDF output path
+        # -----------------------------
+        report_dir = os.path.join(STATIC_DIR, "reports")
+        os.makedirs(report_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        safe_breed_name = re.sub(r"[^a-zA-Z0-9_-]", "_", breed)
+        output_path = os.path.join(report_dir, f"{safe_breed_name}_report.pdf")
 
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=legal,
-        leftMargin=40,
-        rightMargin=40,
-        topMargin=40,
-        bottomMargin=40
-    )
+        # -----------------------------
+        # Build PDF
+        # -----------------------------
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=legal,
+            leftMargin=40,
+            rightMargin=40,
+            topMargin=40,
+            bottomMargin=40
+        )
 
-    FRAME_WIDTH = doc.width
-    story = []
+        FRAME_WIDTH = doc.width
+        story = []
 
-    # Header
-    header_data = [[breed_display], [""]]
-    header_table = Table(header_data, colWidths=[FRAME_WIDTH], rowHeights=[30, 15])
-    header_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.black),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 22),
-        ('TOPPADDING', (0,0), (-1,-1), 0),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-        ('LEFTPADDING', (0,0), (-1,-1), 0),
-        ('RIGHTPADDING', (0,0), (-1,-1), 0),
-    ]))
-    story.append(header_table)
+        # Header
+        header_data = [[breed_display], [""]]
+        header_table = Table(header_data, colWidths=[FRAME_WIDTH], rowHeights=[30, 15])
+        header_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.black),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 22),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ]))
+        story.append(header_table)
 
-    # Info Table
-    info_data = [
-    [" Predicted Breed", f" {breed_display}"],
-    [" Confidence", f" {confidence:.4f}"],
-    [" Generated", f" {timestamp}"],
-    ]
-
-    info_table = Table(info_data, colWidths=[FRAME_WIDTH * 0.35, FRAME_WIDTH * 0.65])
-    info_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (0,-1), colors.HexColor("#f5f7fa")),
-        ('TEXTCOLOR', (0,0), (-1,-1), colors.black),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-        ('FONTSIZE', (0,0), (-1,-1), 12),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('LEFTPADDING', (0,0), (-1,-1), 0),
-        ('RIGHTPADDING', (0,0), (-1,-1), 0),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-    ]))
-    story.append(info_table)
-    story.append(Spacer(1, 0.3 * inch))
-
-    # Uploaded image
-    if img_path:
-        img = RLImage(img_path)
-        img._restrictSize(FRAME_WIDTH * 0.8, 350)
-        story.append(img)
+        # Info Table
+        info_data = [
+            [" Predicted Breed", f" {breed_display}"],
+            [" Confidence", f" {confidence:.4f}"],
+            [" Generated", f" {timestamp}"],
+        ]
+        info_table = Table(info_data, colWidths=[FRAME_WIDTH * 0.35, FRAME_WIDTH * 0.65])
+        info_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (0,-1), colors.HexColor("#f5f7fa")),
+            ('TEXTCOLOR', (0,0), (-1,-1), colors.black),
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+            ('FONTSIZE', (0,0), (-1,-1), 12),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        story.append(info_table)
         story.append(Spacer(1, 0.3 * inch))
 
-    # Description
-    desc_style = ParagraphStyle(
-        name="Description",
-        fontSize=11,
-        leading=16,
-        alignment=4,
-        spaceBefore=10
-    )
-    story.append(Paragraph(description, desc_style))
+        # Uploaded image
+        if img_path:
+            try:
+                img = RLImage(img_path)
+                img._restrictSize(FRAME_WIDTH * 0.8, 350)
+                story.append(img)
+                story.append(Spacer(1, 0.3 * inch))
+            except Exception as e:
+                app.logger.warning(f"Image insert failed: {e}")
 
-    # Footer
-    footer_table = Table([[ "\U0001F43E PawPrint", f"Generated: {timestamp}" ]], colWidths=[FRAME_WIDTH * 0.5, FRAME_WIDTH * 0.5])
-    footer_table.setStyle(TableStyle([
-        ('ALIGN', (0,0), (0,0), 'LEFT'),
-        ('ALIGN', (1,0), (1,0), 'RIGHT'),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Oblique'),
-        ('FONTSIZE', (0,0), (-1,-1), 9),
-        ('TEXTCOLOR', (0,0), (-1,-1), colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 10),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-    ]))
-    story.append(Spacer(1, 0.5 * inch))
-    story.append(footer_table)
+        # Description
+        desc_style = ParagraphStyle(
+            name="Description",
+            fontSize=11,
+            leading=16,
+            alignment=4,
+            spaceBefore=10
+        )
+        story.append(Paragraph(description, desc_style))
 
-    # Build PDF
-    doc.build(story)
+        # Footer
+        footer_table = Table([[ "\U0001F43E PawPrint", f"Generated: {timestamp}" ]], colWidths=[FRAME_WIDTH * 0.5, FRAME_WIDTH * 0.5])
+        footer_table.setStyle(TableStyle([
+            ('ALIGN', (0,0), (0,0), 'LEFT'),
+            ('ALIGN', (1,0), (1,0), 'RIGHT'),
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Oblique'),
+            ('FONTSIZE', (0,0), (-1,-1), 9),
+            ('TEXTCOLOR', (0,0), (-1,-1), colors.grey),
+            ('TOPPADDING', (0,0), (-1,-1), 10),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+        ]))
+        story.append(Spacer(1, 0.5 * inch))
+        story.append(footer_table)
 
-    # Return the URL via the new dynamic route
-    pdf_url = url_for("serve_report", filename=f"{safe_breed_name}_report.pdf", _external=True)
-    return jsonify({"pdf_url": pdf_url})
+        # Build PDF safely
+        try:
+            doc.build(story)
+        except Exception as e:
+            app.logger.exception("PDF generation failed")
+            return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
 
+        # Return PDF URL
+        pdf_url = url_for("serve_report", filename=f"{safe_breed_name}_report.pdf", _external=True)
+        return jsonify({"pdf_url": pdf_url})
 
+    except Exception as e:
+        app.logger.exception("Generate PDF endpoint error")
+        return jsonify({"error": str(e)}), 500
 
 # -----------------------------
 # RUN
