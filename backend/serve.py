@@ -29,13 +29,22 @@ CORS(app)  # simple, allows all origins
 # MODEL (load once at startup)
 # -----------------------------
 print("🔥 Loading TensorFlow model at startup...")
+
+# Load model only once when app starts (NOT inside endpoints)
 model = tf.saved_model.load(MODEL_DIR)
-infer = model.signatures.get("serving_default") or list(model.signatures.values())[0]
-print("🔥 Model loaded and ready.")
+
+# Pick the correct inference signature
+infer = (
+    model.signatures.get("serving_default")
+    or list(model.signatures.values())[0]
+)
+
+print("🔥 Model loaded. Available signatures:", list(model.signatures.keys()))
+print("🔥 Inference signature ready to use.")
 
 def get_model():
+    # Return the already-loaded inference function
     return infer
-
 
 # -----------------------------
 # LABELS
@@ -752,16 +761,29 @@ def home():
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
+        # -----------------------------
+        # Validate input
+        # -----------------------------
         if "image" not in request.files:
             return jsonify({"error": "no image file"}), 400
 
         file = request.files["image"]
+
+        # -----------------------------
+        # Preprocess image
+        # -----------------------------
         x = preprocess_image(file.stream)
 
-        infer_model = get_model()
+        # -----------------------------
+        # Run inference using preloaded model
+        # -----------------------------
+        infer_model = get_model()   # uses already-loaded model only
         preds_dict = infer_model(tf.constant(x))
         preds = list(preds_dict.values())[0].numpy()[0]
 
+        # -----------------------------
+        # Top-3 predictions
+        # -----------------------------
         top_indices = preds.argsort()[-3:][::-1]
 
         results = []
@@ -769,13 +791,24 @@ def predict():
             breed = idx_to_class[int(idx)]
             conf = float(preds[int(idx)])
 
-            # ✅ Updated static image URL generation
-            sample_path = os.path.join(STATIC_DIR, "breed_examples", f"{breed}.jpg")
-            sample_url = None
-            if os.path.exists(sample_path):
-                sample_url = url_for('static', filename=f'breed_examples/{breed}.jpg', _external=True)
+            # Example image (if available)
+            sample_path = os.path.join(
+                STATIC_DIR, "breed_examples", f"{breed}.jpg"
+            )
+            sample_url = (
+                url_for(
+                    "static",
+                    filename=f"breed_examples/{breed}.jpg",
+                    _external=True
+                )
+                if os.path.exists(sample_path)
+                else None
+            )
 
-            short_desc = breed_descriptions.get(breed, "This breed is known for its unique traits.")
+            # Short + expanded descriptions
+            short_desc = breed_descriptions.get(
+                breed, "This breed is known for its unique traits."
+            )
 
             long_desc = expand_description(
                 breed,
