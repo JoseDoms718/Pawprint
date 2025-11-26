@@ -1,8 +1,7 @@
 const fileUpload = document.getElementById("fileUpload");
 const preview = document.getElementById("preview");
-const BASE_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
-    ? "http://localhost:8000"
-    : "https://pawprint-backend.onrender.com";
+const BASE_URL = "https://pawprint-backend.onrender.com";
+
 const PREDICT_URL = `${BASE_URL}/predict`;
 const GENERATE_PDF_URL = `${BASE_URL}/generate_pdf`;
 

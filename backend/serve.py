@@ -1,7 +1,7 @@
 import os, io, json, re
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, url_for
-from flask_cors import CORS, cross_origin
+from flask_cors import cross_origin
 import numpy as np
 from PIL import Image
 
@@ -23,7 +23,14 @@ IMG_SIZE = 224
 # APP
 # -----------------------------
 app = Flask(__name__, static_folder=STATIC_DIR)
-CORS(app)  # simple, allows all origins
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["Content-Type"],
+    methods=["GET", "POST", "OPTIONS"],
+)
+
 
 # -----------------------------
 # MODEL LOAD (load once)
@@ -747,6 +754,7 @@ def home():
 # PREDICT endpoint
 # -----------------------------
 @app.route("/predict", methods=["POST"])
+@cross_origin()
 def predict():
     try:
         if "image" not in request.files:
@@ -801,6 +809,7 @@ def predict():
 # GENERATE PDF endpoint
 # -----------------------------
 @app.route("/generate_pdf", methods=["POST"])
+@cross_origin()
 def generate_pdf():
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
     from reportlab.lib.styles import ParagraphStyle
