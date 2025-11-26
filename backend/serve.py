@@ -739,6 +739,10 @@ def serve_report(filename):
     report_dir = os.path.join(STATIC_DIR, "reports")
     return send_from_directory(report_dir, filename)
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "ok", "message": "PawPrint backend is running"}), 200
+
 # -----------------------------
 # PREDICT endpoint
 # -----------------------------
