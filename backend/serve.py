@@ -1,53 +1,43 @@
 import os, io, json, re
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, url_for
-from flask_cors import CORS, cross_origin
+from flask_cors import CORS
 import numpy as np
 from PIL import Image
-
-# TensorFlow import may be heavy — keep it lazy if you want, but we load once here.
 import tensorflow as tf
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-# Absolute paths to avoid local/Render path issues
 APP_ROOT = os.path.abspath(os.path.dirname(__file__))
 STATIC_DIR = os.path.join(APP_ROOT, "static")
-MODEL_DIR = os.path.join(APP_ROOT, "dog_model")
+MODEL_DIR = os.path.join(APP_ROOT, "dog_model")  # saved_model.pb inside here
 LABELS_PATH = os.path.join(APP_ROOT, "labels.json")
-
 IMG_SIZE = 224
 
 # -----------------------------
 # APP
 # -----------------------------
 app = Flask(__name__, static_folder=STATIC_DIR)
-CORS(app)  # simple, allows all origins
+CORS(app)
 
 # -----------------------------
-# LOAD SAVEDMODEL (Graph Mode)
+# LOAD SAVEDMODEL
 # -----------------------------
 print("🔄 Loading TensorFlow SavedModel...")
-
 model = tf.saved_model.load(MODEL_DIR)
 infer = model.signatures["serving_default"]
-
 print("✅ SavedModel loaded successfully")
 
-def get_model():
-    return infer
-
 # -----------------------------
-# LABELS
+# LOAD LABELS
 # -----------------------------
 if not os.path.exists(LABELS_PATH):
-    raise FileNotFoundError(f"labels.json not found at {LABELS_PATH}. Move frontend/labels.json -> backend/labels.json")
+    raise FileNotFoundError(f"labels.json not found at {LABELS_PATH}")
 
 with open(LABELS_PATH, "r") as f:
     class_indices = json.load(f)
 idx_to_class = {int(v): k for k, v in class_indices.items()}
-
 breed_descriptions = {
     "affenpinscher": "Affenpinschers are small but fearless terriers known for their monkey-like expressions and lively personality.",
     "Afghan_hound": "The Afghan Hound is an elegant breed with long flowing hair, famous for its dignified and independent nature.",
@@ -668,17 +658,22 @@ breed_quick_tips = {
     "wire-haired_fox_terrier": "Daily walks and play. Groom wiry coat regularly. Early socialization and consistent training. Monitor dental health. Mental stimulation recommended.",
     "Yorkshire_terrier": "Daily play and short walks. Groom coat regularly. Early socialization and training essential. Monitor dental health. Provide warm and safe environment."
 }
-
 # -----------------------------
 # HELPERS
 # -----------------------------
+def preprocess_image(file_stream):
+    img = Image.open(file_stream).convert("RGB").resize((IMG_SIZE, IMG_SIZE))
+    arr = np.array(img) / 255.0
+    arr = np.expand_dims(arr, 0).astype(np.float32)
+    return arr
+
 def expand_description(
     breed_key: str, 
     short_desc: str, 
-    breed_temperaments: dict, 
-    breed_appearance: dict,
-    breed_care: dict,
-    breed_quick_tips: dict
+    breed_temperaments={}, 
+    breed_appearance={},
+    breed_care={},
+    breed_quick_tips={}
 ) -> str:
     if not breed_key or not isinstance(breed_key, str):
         breed_key = "Unknown_Breed"
@@ -732,63 +727,34 @@ def expand_description(
     )
     return combined
 
-def preprocess_image(file_stream):
-    img = Image.open(file_stream).convert("RGB").resize((IMG_SIZE, IMG_SIZE))
-    arr = np.array(img) / 255.0
-    arr = np.expand_dims(arr, 0).astype(np.float32)
-    return arr
-
-@app.route("/reports/<filename>")
-def serve_report(filename):
-    report_dir = os.path.join(STATIC_DIR, "reports")
-    return send_from_directory(report_dir, filename)
-
+# -----------------------------
+# ROUTES
+# -----------------------------
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "ok", "message": "PawPrint backend is running"}), 200
+    return jsonify({"status": "ok", "message": "Backend running"}), 200
 
-# -----------------------------
-# PREDICT endpoint
-# -----------------------------
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
         if "image" not in request.files:
             return jsonify({"error": "no image file"}), 400
-
         file = request.files["image"]
         x = preprocess_image(file.stream)
-
-        infer = get_model()
-
-        # Run SavedModel inference (returns dict)
         preds_dict = infer(tf.constant(x))
         preds = list(preds_dict.values())[0].numpy()[0]
-
         top_indices = preds.argsort()[-3:][::-1]
-
         results = []
         for idx in top_indices:
             breed = idx_to_class[int(idx)]
             conf = float(preds[int(idx)])
-
             sample_path = os.path.join(STATIC_DIR, "breed_examples", f"{breed}.jpg")
             sample_url = (
                 url_for("static", filename=f"breed_examples/{breed}.jpg", _external=True)
-                if os.path.exists(sample_path)
-                else None
+                if os.path.exists(sample_path) else None
             )
-
-            short_desc = breed_descriptions.get(breed, "This breed is known for its unique traits.")
-            long_desc = expand_description(
-                breed,
-                short_desc,
-                breed_temperaments,
-                breed_appearance,
-                breed_care,
-                breed_quick_tips
-            )
-
+            short_desc = "Short description here"
+            long_desc = expand_description(breed, short_desc)
             results.append({
                 "breed": breed,
                 "confidence": conf,
@@ -797,52 +763,36 @@ def predict():
                 "long_description": long_desc,
                 "temp_file_name": file.filename
             })
-
         return jsonify({"predictions": results})
-
     except Exception as e:
         app.logger.exception("Predict error")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/reports/<filename>")
+def serve_report(filename):
+    report_dir = os.path.join(STATIC_DIR, "reports")
+    return send_from_directory(report_dir, filename)
+
 # -----------------------------
-# GENERATE PDF endpoint
+# GENERATE PDF
 # -----------------------------
 @app.route("/generate_pdf", methods=["POST"])
 def generate_pdf():
     try:
-        # Lazy imports
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.pagesizes import legal
         from reportlab.lib import colors
         from reportlab.lib.units import inch
 
-        # -----------------------------
-        # Get form data
-        # -----------------------------
         breed_raw = request.form.get("breed", "Unknown_Breed")
         breed_display = breed_raw.replace("_", " ").replace("-", " ").title()
         breed = breed_raw
         confidence = float(request.form.get("confidence", 0.0))
         uploaded_file = request.files.get("image")
+        short_desc = "Short description here"
+        description = expand_description(breed, short_desc)
 
-        short_desc = breed_descriptions.get(breed, "A well-loved companion breed.")
-
-        # -----------------------------
-        # Expand full description
-        # -----------------------------
-        description = expand_description(
-            breed,
-            short_desc,
-            breed_temperaments,
-            breed_appearance,
-            breed_care,
-            breed_quick_tips
-        )
-
-        # -----------------------------
-        # Save uploaded image
-        # -----------------------------
         img_path = None
         if uploaded_file and uploaded_file.filename:
             upload_dir = os.path.join(STATIC_DIR, "uploads")
@@ -851,27 +801,13 @@ def generate_pdf():
             img_path = os.path.join(upload_dir, safe_filename)
             uploaded_file.save(img_path)
 
-        # -----------------------------
-        # Prepare PDF output path
-        # -----------------------------
         report_dir = os.path.join(STATIC_DIR, "reports")
         os.makedirs(report_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         safe_breed_name = re.sub(r"[^a-zA-Z0-9_-]", "_", breed)
         output_path = os.path.join(report_dir, f"{safe_breed_name}_report.pdf")
 
-        # -----------------------------
-        # Build PDF
-        # -----------------------------
-        doc = SimpleDocTemplate(
-            output_path,
-            pagesize=legal,
-            leftMargin=40,
-            rightMargin=40,
-            topMargin=40,
-            bottomMargin=40
-        )
-
+        doc = SimpleDocTemplate(output_path, pagesize=legal, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
         FRAME_WIDTH = doc.width
         story = []
 
@@ -884,15 +820,11 @@ def generate_pdf():
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,0), 22),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-            ('LEFTPADDING', (0,0), (-1,-1), 0),
-            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+            ('FONTSIZE', (0,0), (-1,0), 22)
         ]))
         story.append(header_table)
 
-        # Info Table
+        # Info table
         info_data = [
             [" Predicted Breed", f" {breed_display}"],
             [" Confidence", f" {confidence:.4f}"],
@@ -902,14 +834,9 @@ def generate_pdf():
         info_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (0,-1), colors.HexColor("#f5f7fa")),
             ('TEXTCOLOR', (0,0), (-1,-1), colors.black),
-            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-            ('FONTSIZE', (0,0), (-1,-1), 12),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-            ('LEFTPADDING', (0,0), (-1,-1), 0),
-            ('RIGHTPADDING', (0,0), (-1,-1), 0),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+            ('FONTSIZE', (0,0), (-1,-1), 12)
         ]))
         story.append(info_table)
         story.append(Spacer(1, 0.3 * inch))
@@ -924,43 +851,14 @@ def generate_pdf():
             except Exception as e:
                 app.logger.warning(f"Image insert failed: {e}")
 
-        # Description
-        desc_style = ParagraphStyle(
-            name="Description",
-            fontSize=11,
-            leading=16,
-            alignment=4,
-            spaceBefore=10
-        )
+        desc_style = ParagraphStyle(name="Description", fontSize=11, leading=16, alignment=4, spaceBefore=10)
         story.append(Paragraph(description, desc_style))
 
-        # Footer
-        footer_table = Table([[ "\U0001F43E PawPrint", f"Generated: {timestamp}" ]], colWidths=[FRAME_WIDTH * 0.5, FRAME_WIDTH * 0.5])
-        footer_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (0,0), 'LEFT'),
-            ('ALIGN', (1,0), (1,0), 'RIGHT'),
-            ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Oblique'),
-            ('FONTSIZE', (0,0), (-1,-1), 9),
-            ('TEXTCOLOR', (0,0), (-1,-1), colors.grey),
-            ('TOPPADDING', (0,0), (-1,-1), 10),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-        ]))
-        story.append(Spacer(1, 0.5 * inch))
-        story.append(footer_table)
-
-        # Build PDF safely
-        try:
-            doc.build(story)
-        except Exception as e:
-            app.logger.exception("PDF generation failed")
-            return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
-
-        # Return PDF URL
+        doc.build(story)
         pdf_url = url_for("serve_report", filename=f"{safe_breed_name}_report.pdf", _external=True)
         return jsonify({"pdf_url": pdf_url})
-
     except Exception as e:
-        app.logger.exception("Generate PDF endpoint error")
+        app.logger.exception("Generate PDF error")
         return jsonify({"error": str(e)}), 500
 
 # -----------------------------
