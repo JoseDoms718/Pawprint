@@ -26,25 +26,17 @@ app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)  # simple, allows all origins
 
 # -----------------------------
-# 1️⃣ Enable unsafe deserialization first
+# LOAD SAVEDMODEL (Graph Mode)
 # -----------------------------
-import keras
-keras.config.enable_unsafe_deserialization()  # MUST come first
+print("🔄 Loading TensorFlow SavedModel...")
 
-# -----------------------------
-# 2️⃣ Now import load_model and other Keras stuff
-# -----------------------------
-from keras.models import load_model
+model = tf.saved_model.load(MODEL_DIR)
+infer = model.signatures["serving_default"]
 
-# -----------------------------
-# 3️⃣ Load your model
-# -----------------------------
-H5_MODEL_PATH = os.path.join(MODEL_DIR, "dog_model_clean.keras")
-model = load_model(H5_MODEL_PATH, compile=False)
-print("✅ .h5 Model loaded successfully")
+print("✅ SavedModel loaded successfully")
 
 def get_model():
-    return model
+    return infer
 
 # -----------------------------
 # LABELS
@@ -761,28 +753,18 @@ def home():
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
-        # -----------------------------
-        # Validate input
-        # -----------------------------
         if "image" not in request.files:
             return jsonify({"error": "no image file"}), 400
 
         file = request.files["image"]
-
-        # -----------------------------
-        # Preprocess image
-        # -----------------------------
         x = preprocess_image(file.stream)
 
-        # -----------------------------
-        # Run inference using preloaded model
-        # -----------------------------
-        model = get_model()  # Keras model
-        preds = model.predict(x)[0]  # returns NumPy array directly
+        infer = get_model()
 
-        # -----------------------------
-        # Top-3 predictions
-        # -----------------------------
+        # Run SavedModel inference (returns dict)
+        preds_dict = infer(tf.constant(x))
+        preds = list(preds_dict.values())[0].numpy()[0]
+
         top_indices = preds.argsort()[-3:][::-1]
 
         results = []
@@ -790,25 +772,14 @@ def predict():
             breed = idx_to_class[int(idx)]
             conf = float(preds[int(idx)])
 
-            # Example image (if available)
-            sample_path = os.path.join(
-                STATIC_DIR, "breed_examples", f"{breed}.jpg"
-            )
+            sample_path = os.path.join(STATIC_DIR, "breed_examples", f"{breed}.jpg")
             sample_url = (
-                url_for(
-                    "static",
-                    filename=f"breed_examples/{breed}.jpg",
-                    _external=True
-                )
+                url_for("static", filename=f"breed_examples/{breed}.jpg", _external=True)
                 if os.path.exists(sample_path)
                 else None
             )
 
-            # Short + expanded descriptions
-            short_desc = breed_descriptions.get(
-                breed, "This breed is known for its unique traits."
-            )
-
+            short_desc = breed_descriptions.get(breed, "This breed is known for its unique traits.")
             long_desc = expand_description(
                 breed,
                 short_desc,
