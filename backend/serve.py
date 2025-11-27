@@ -26,25 +26,25 @@ app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)  # simple, allows all origins
 
 # -----------------------------
-# MODEL (load once at startup)
+# 1️⃣ Enable unsafe deserialization first
 # -----------------------------
-print("🔥 Loading TensorFlow model at startup...")
+import keras
+keras.config.enable_unsafe_deserialization()  # MUST come first
 
-# Load model only once when app starts (NOT inside endpoints)
-model = tf.saved_model.load(MODEL_DIR)
+# -----------------------------
+# 2️⃣ Now import load_model and other Keras stuff
+# -----------------------------
+from keras.models import load_model
 
-# Pick the correct inference signature
-infer = (
-    model.signatures.get("serving_default")
-    or list(model.signatures.values())[0]
-)
-
-print("🔥 Model loaded. Available signatures:", list(model.signatures.keys()))
-print("🔥 Inference signature ready to use.")
+# -----------------------------
+# 3️⃣ Load your model
+# -----------------------------
+H5_MODEL_PATH = os.path.join(MODEL_DIR, "dog_model_clean.keras")
+model = load_model(H5_MODEL_PATH, compile=False)
+print("✅ .h5 Model loaded successfully")
 
 def get_model():
-    # Return the already-loaded inference function
-    return infer
+    return model
 
 # -----------------------------
 # LABELS
@@ -777,9 +777,8 @@ def predict():
         # -----------------------------
         # Run inference using preloaded model
         # -----------------------------
-        infer_model = get_model()   # uses already-loaded model only
-        preds_dict = infer_model(tf.constant(x))
-        preds = list(preds_dict.values())[0].numpy()[0]
+        model = get_model()  # Keras model
+        preds = model.predict(x)[0]  # returns NumPy array directly
 
         # -----------------------------
         # Top-3 predictions
